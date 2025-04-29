@@ -4,6 +4,7 @@ use shell_escape::unix::escape;
 use std::env;
 use swayipc::{
     Connection, EventType,
+    async_std::println,
     reply::{Event, Output, WindowChange},
 };
 use thiserror::Error;
@@ -41,6 +42,8 @@ async fn main() -> Result<(), AppError> {
 
     apply_rules(&mut conn, w, h).await?;
 
+    conn.run_command("focus mouse_warping none").await?;
+
     spawn_dropdown(&mut conn, &cli.command).await?;
 
     conn.run_command("focus mouse_warping container").await?;
@@ -52,13 +55,9 @@ async fn main() -> Result<(), AppError> {
     while let Some(msg) = events.next().await {
         let Event::Window(ev) = msg? else { continue };
 
-        if ev.change == WindowChange::Focus {
-            // if it's *not* the dropdown that just got focus,
-            // we know the user moved away → kill it
-            if ev.container.app_id.as_deref() != Some("dropdown") {
-                conn.run_command("[app_id=\"dropdown\"] kill").await?;
-                break;
-            }
+        if ev.change == WindowChange::Focus && ev.container.app_id.as_deref() != Some("dropdown") {
+            conn.run_command("[app_id=\"dropdown\"] kill").await?;
+            break;
         }
     }
 
@@ -73,6 +72,7 @@ async fn compute_dimensions(conn: &mut Connection) -> Result<(i32, i32), AppErro
         .ok_or(AppError::NoOutput)?;
     let w = (out.rect.width as f32 * 0.20).round() as i32;
     let h = (out.rect.height as f32 * 0.40).round() as i32;
+    println!("width: {:?}, height: {:?}", w, h).await;
     Ok((w, h))
 }
 
@@ -86,7 +86,6 @@ async fn apply_rules(conn: &mut Connection, w: i32, h: i32) -> Result<(), AppErr
         .await?;
     conn.run_command("for_window [app_id=\"dropdown\"] move down 35")
         .await?;
-    conn.run_command("focus mouse_warping none").await?;
     Ok(())
 }
 
