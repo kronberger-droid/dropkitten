@@ -1,139 +1,106 @@
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use serde::Deserialize;
-use std::{env, process::Command};
+use clap::Parser;
+use futures::StreamExt;
+use shell_escape::unix::escape;
+use std::env;
+use swayipc::{
+    Connection, EventType,
+    reply::{Event, Output, WindowChange},
+};
+use thiserror::Error;
 
-/// dropdown — toggle a Kitty overlay “dropdown” window
-#[derive(Parser)]
-#[command(name = "dropdown")]
+#[derive(Parser, Debug)]
+#[command(author, version, about)]
 struct Cli {
-    #[command(subcommand)]
-    cmd: CommandType,
+    #[arg(trailing_var_arg = true)]
+    command: Vec<String>,
 }
 
-#[derive(Subcommand)]
-enum CommandType {
-    /// Toggle the dropdown (open if closed, close if open)
-    Toggle,
-    /// Force-open the dropdown
-    Open,
-    /// Force-close the dropdown
-    Close,
+#[derive(Debug, Error)]
+enum AppError {
+    #[error("Sway IPC error: {0}")]
+    Swayipc(String),
+    #[error("Environment error: {0}")]
+    Env(#[from] env::VarError),
+    #[error("No active output detected")]
+    NoOutput,
 }
 
-#[derive(Deserialize)]
-struct OsWindow {
-    tabs: Vec<Tab>,
-}
-#[derive(Deserialize)]
-struct Tab {
-    windows: Vec<Win>,
-}
-#[derive(Deserialize)]
-struct Win {
-    id: i64,
-    title: String,
+impl From<swayipc::Error> for AppError {
+    fn from(e: swayipc::Error) -> Self {
+        AppError::Swayipc(e.to_string())
+    }
 }
 
-fn main() -> Result<()> {
-    let Cli { cmd } = Cli::parse();
+#[tokio::main]
+async fn main() -> Result<(), AppError> {
+    let cli = Cli::parse();
 
-    // Ensure KITTY_LISTEN_ON is set by your Kitty config (e.g. in kitty.conf: listen_on unix:/tmp/kitty-rc.sock)
-    // Then you don't need to pass --to; kitty @ commands will pick up the env variable.
+    let mut conn = Connection::new().await?;
 
-    match cmd {
-        CommandType::Toggle => {
-            if dropdown_exists()? {
-                close_dropdown()?;
-            } else {
-                open_dropdown()?;
+    let (w, h) = compute_dimensions(&mut conn).await?;
+
+    apply_rules(&mut conn, w, h).await?;
+
+    spawn_dropdown(&mut conn, &cli.command).await?;
+
+    conn.run_command("focus mouse_warping container").await?;
+
+    let subs_conn = Connection::new().await?;
+
+    let mut events = subs_conn.subscribe(&[EventType::Window]).await?;
+
+    while let Some(msg) = events.next().await {
+        let Event::Window(ev) = msg? else { continue };
+
+        if ev.change == WindowChange::Focus {
+            // if it's *not* the dropdown that just got focus,
+            // we know the user moved away → kill it
+            if ev.container.app_id.as_deref() != Some("dropdown") {
+                conn.run_command("[app_id=\"dropdown\"] kill").await?;
+                break;
             }
         }
-        CommandType::Open => open_dropdown()?,
-        CommandType::Close => close_dropdown()?,
     }
 
     Ok(())
 }
 
-/// Check if a Kitty window titled "dropdown" exists
-fn dropdown_exists() -> Result<bool> {
-    let out = Command::new("kitty")
-        .args(["@", "ls"]) // uses KITTY_LISTEN_ON env
-        .output()
-        .context("listing kitty windows")?;
-
-    if out.stdout.is_empty() {
-        return Ok(false);
-    }
-
-    let wins: Vec<OsWindow> =
-        serde_json::from_slice(&out.stdout).context("parsing kitty ls JSON")?;
-
-    Ok(wins
-        .iter()
-        .flat_map(|o| &o.tabs)
-        .flat_map(|t| &t.windows)
-        .any(|w| w.title == "dropdown"))
+async fn compute_dimensions(conn: &mut Connection) -> Result<(i32, i32), AppError> {
+    let outputs: Vec<Output> = conn.get_outputs().await?;
+    let out = outputs
+        .into_iter()
+        .find(|o| o.active)
+        .ok_or(AppError::NoOutput)?;
+    let w = (out.rect.width as f32 * 0.20).round() as i32;
+    let h = (out.rect.height as f32 * 0.40).round() as i32;
+    Ok((w, h))
 }
 
-/// Launch a Kitty overlay titled "dropdown"
-fn open_dropdown() -> Result<()> {
-    Command::new("kitty")
-        .args([
-            "@",
-            "launch",
-            "--type",
-            "overlay-main",
-            "--title",
-            "dropdown",
-            // position via horizontal split (top)
-            "--location",
-            "hsplit",
-            // shrink height to ~30% (negative bias removes from bottom)
-            "--bias",
-            "-70",
-            // keep focus on original window
-            "--keep-focus",
-            // allow remote control within overlay
-            "--allow-remote-control",
-            // set working directory
-            "--cwd",
-            &env::var("HOME").context("reading HOME env")?,
-            // command to run inside overlay
-            "--",
-            "bluetuith",
-        ])
-        .status()
-        .context("launching dropdown overlay")?;
+async fn apply_rules(conn: &mut Connection, w: i32, h: i32) -> Result<(), AppError> {
+    conn.run_command(format!(
+        "for_window [app_id=\"dropdown\"] floating enable, resize set {} {}",
+        w, h
+    ))
+    .await?;
+    conn.run_command("for_window [app_id=\"dropdown\"] move position cursor")
+        .await?;
+    conn.run_command("for_window [app_id=\"dropdown\"] move down 35")
+        .await?;
+    conn.run_command("focus mouse_warping none").await?;
     Ok(())
 }
 
-/// Close the Kitty overlay window titled "dropdown"
-fn close_dropdown() -> Result<()> {
-    let out = Command::new("kitty")
-        .args(["@", "ls"]) // uses KITTY_LISTEN_ON env
-        .output()
-        .context("listing kitty windows for close")?;
-
-    if out.stdout.is_empty() {
-        return Ok(());
+async fn spawn_dropdown(conn: &mut Connection, args: &[String]) -> Result<(), AppError> {
+    let cmd_args = if args.is_empty() {
+        vec![env::var("SHELL")?]
+    } else {
+        args.to_vec()
+    };
+    let mut cmd = String::from("exec kitty --class dropdown --");
+    for a in cmd_args {
+        cmd.push(' ');
+        cmd.push_str(&escape(a.into()));
     }
-
-    let wins: Vec<OsWindow> =
-        serde_json::from_slice(&out.stdout).context("parsing kitty ls JSON for close")?;
-
-    for os in wins {
-        for tab in os.tabs {
-            for w in tab.windows {
-                if w.title == "dropdown" {
-                    Command::new("kitty")
-                        .args(["@", "close-window", "--match", &format!("id:{}", w.id)])
-                        .status()
-                        .context("closing dropdown window")?;
-                }
-            }
-        }
-    }
+    conn.run_command(cmd).await?;
     Ok(())
 }
