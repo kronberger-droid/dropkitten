@@ -19,9 +19,9 @@ outputs = { self, nixpkgs, flake-utils, ... }:
           cargoHash = "sha256-nA6T8soi2vDO4e1Qj/a6TuNr4NkIyhcR3bRjUhvL6gA=";
 
           patchPhase = ''
-            substituteInPlace Cargo.toml \
-              --replace 'edition = "2024"' 'cargo-features = ["edition2024"]
-              edition = "2024"'
+            # prepend the cargo-features line to the top of Cargo.toml
+            (echo 'cargo-features = ["edition2024"]' && cat Cargo.toml) > Cargo.toml.tmp
+            mv Cargo.toml.tmp Cargo.toml
           '';
           buildPhase = ''
             export RUSTC_BOOTSTRAP=1
