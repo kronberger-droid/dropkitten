@@ -18,15 +18,6 @@ outputs = { self, nixpkgs, flake-utils, ... }:
 
           cargoHash = "sha256-OoiHm9ZAXYhcpxcYWkcabBHzJlQIcwkhuGPAb2b5H/A=";
 
-          patchPhase = ''
-            # prepend the cargo-features line to the top of Cargo.toml
-            (echo 'cargo-features = ["edition2024"]' && cat Cargo.toml) > Cargo.toml.tmp
-            mv Cargo.toml.tmp Cargo.toml
-          '';
-          buildPhase = ''
-            export RUSTC_BOOTSTRAP=1
-            cargo build --release
-          '';
           installPhase = ''
             mkdir -p "$out/bin"
             cp "target/release/dropkitten" "$out/bin/dropkitten"
