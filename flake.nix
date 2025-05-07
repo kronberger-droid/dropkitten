@@ -1,7 +1,7 @@
 { description = "dropkitten helper for Nix flakes with basic Rust dev shell";
 
 inputs = {
-  nixpkgs.url     = "github:NixOS/nixpkgs/nixos-24.11";
+  nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
   flake-utils.url = "github:numtide/flake-utils";
 };
 
