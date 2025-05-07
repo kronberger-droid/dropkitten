@@ -16,7 +16,7 @@ outputs = { self, nixpkgs, flake-utils, ... }:
           version   = "0.1.0";
           src       = self;
 
-          cargoHash = "sha256-nA6T8soi2vDO4e1Qj/a6TuNr4NkIyhcR3bRjUhvL6gA=";
+          cargoHash = "sha256-OoiHm9ZAXYhcpxcYWkcabBHzJlQIcwkhuGPAb2b5H/A=";
 
           patchPhase = ''
             # prepend the cargo-features line to the top of Cargo.toml
