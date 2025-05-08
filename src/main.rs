@@ -148,16 +148,11 @@ async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
 
     println!("{}", y);
 
-    let prefix = "for_window [app_id=\"dropdown\"]";
+    let command = format!(
+        "for_window [app_id=\"dropdown\"] floating enable, resize set {w} {h}, move position cursor"
+    );
 
-    conn.run_command(format!("{prefix} floating enable"))
-        .await?;
-    conn.run_command(format!("{prefix} resize set {w} {h}"))
-        .await?;
-    conn.run_command(format!("{prefix} move position cursor"))
-        .await?;
-    conn.run_command(format!("{prefix} move down {y}")).await?;
-    conn.run_command(format!("{prefix} focus")).await?;
+    conn.run_command(&command).await?;
 
     Ok(())
 }
@@ -179,6 +174,8 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError
         cmd.push_str(&escape(a.into()));
     }
     conn.run_command(cmd).await?;
+
+    conn.run_command("for [app_id=\"dropdown\"] focus").await?;
 
     focus_change_watcher(conn).await?;
 
