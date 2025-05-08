@@ -6,7 +6,6 @@ use std::env;
 use std::str::FromStr;
 use swayipc::{
     Connection, EventType,
-    async_std::println,
     reply::{Event, WindowChange},
 };
 use thiserror::Error;
@@ -142,13 +141,15 @@ async fn compute_dimensions(conn: &mut Connection, opts: &Cli) -> Result<(i32, i
 async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
     let (w, h) = compute_dimensions(conn, cli).await?;
 
+    let prefix = "for_window [app_id=\"dropdown\"]";
+
     let rule = format!(
-        "for_window [app_id=\"dropdown\"] \
-         floating enable, \
-         resize set {w} {h}, \
-         move position cursor, \
-         move down 35, \
-         focus"
+        "
+         {prefix} floating enable, \
+         {prefix} resize set {w} {h}, \
+         {prefix} move position cursor, \
+         {prefix} move down 35, \
+         {prefix} focus",
     );
     conn.run_command(rule).await?;
     Ok(())

@@ -16,7 +16,12 @@ outputs = { self, nixpkgs, flake-utils, ... }:
           version   = "0.1.0";
           src       = self;
 
-          cargoHash = "sha256-OoiHm9ZAXYhcpxcYWkcabBHzJlQIcwkhuGPAb2b5H/A=";
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+
+          cargoVendorDir = "./vendor";
+          cargoHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
         };
       };
 
