@@ -72,12 +72,10 @@ async fn main() -> Result<(), AppError> {
 
     let original_mouse_warping = get_mouse_warping(&mut conn).await;
 
-    // read out current mouse_warping config waybe through warp enum
-    conn.run_command("mouse_warping container").await?;
+    conn.run_command("mouse_warping none").await?;
 
     spawn_dropdown(&mut conn, &cli).await?;
 
-    // this needs to be read out in advace so it can be reset to the right one
     conn.run_command(&format!("mouse_warping {}", original_mouse_warping))
         .await?;
 
