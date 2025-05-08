@@ -1,5 +1,6 @@
 use clap::Parser;
 use futures::StreamExt;
+use regex::Regex;
 use shell_escape::unix::escape;
 use std::env;
 use std::str::FromStr;
@@ -67,10 +68,38 @@ async fn main() -> Result<(), AppError> {
 
     let mut conn = Connection::new().await?;
 
+    let original_mouse_warping = get_mouse_warping(&mut conn).await;
+
+    // read out current mouse_warping config waybe through warp enum
+    conn.run_command("mouse_warping none").await?;
+
     spawn_dropdown(&mut conn, &cli).await?;
+
+    // this needs to be read out in advace so it can be reset to the right one
+    conn.run_command(&format!("mouse_warping {}", original_mouse_warping))
+        .await?;
 
     Ok(())
 }
+
+async fn get_mouse_warping(conn: &mut Connection) -> String {
+    let config = match conn.get_config().await {
+        Ok(cfg) => cfg.config,
+        Err(_) => return "none".to_string(),
+    };
+
+    let re = Regex::new(r"mouse_warping\s+(\w+)").unwrap();
+
+    re.captures(&config)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+// async fn get_mouse_warping(conn: &mut Connection) -> Option<Sring> {
+//     let config conn.
+//     Ok(())
+// }
 
 async fn focus_change_watcher(conn: &mut Connection) -> Result<(), AppError> {
     let subs_conn = Connection::new().await?;
@@ -117,7 +146,8 @@ async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
         "for_window [app_id=\"dropdown\"] \
          floating enable, \
          resize set {w} {h}, \
-         move position cursor, move down 35, \
+         move position cursor, \
+         move down 35, \
          focus"
     );
     conn.run_command(rule).await?;
