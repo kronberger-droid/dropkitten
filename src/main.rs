@@ -67,13 +67,7 @@ async fn main() -> Result<(), AppError> {
 
     let mut conn = Connection::new().await?;
 
-    // read out current mouse_warping config waybe through warp enum
-    conn.run_command("focus mouse_warping none").await?;
-
     spawn_dropdown(&mut conn, &cli).await?;
-
-    // this needs to be read out in advace so it can be reset to the right one
-    conn.run_command("focus mouse_warping container").await?;
 
     Ok(())
 }
@@ -119,26 +113,18 @@ async fn compute_dimensions(conn: &mut Connection, opts: &Cli) -> Result<(i32, i
 async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
     let (w, h) = compute_dimensions(conn, cli).await?;
 
-    println!("width: {:?}, height: {:?}", w, h).await;
-
-    conn.run_command("for_window [app_id=\"dropdown\"] floating enable")
-        .await?;
-
-    conn.run_command(format!(
-        "for_window [app_id=\"dropdown\"] resize set {} {}",
-        w, h
-    ))
-    .await?;
-
-    conn.run_command("for_window [app_id=\"dropdown\"] move position cursor")
-        .await?;
-
-    conn.run_command("for_window [app_id=\"dropdown\"] move down 35")
-        .await?;
-
+    let rule = format!(
+        "for_window [app_id=\"dropdown\"] \
+         floating enable, \
+         resize set {w} {h}, \
+         move position cursor, move down 35, \
+         focus"
+    );
+    conn.run_command(rule).await?;
     Ok(())
 }
 
+/// spawns the dropdown window
 async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
     apply_rules(conn, cli).await?;
 
