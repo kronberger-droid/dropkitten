@@ -17,11 +17,6 @@ outputs = { self, nixpkgs, flake-utils, ... }:
           src       = self;
 
           cargoHash = "sha256-OoiHm9ZAXYhcpxcYWkcabBHzJlQIcwkhuGPAb2b5H/A=";
-
-          installPhase = ''
-            mkdir -p "$out/bin"
-            cp "target/release/dropkitten" "$out/bin/dropkitten"
-          '';
         };
       };
 
