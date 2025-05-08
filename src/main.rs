@@ -40,6 +40,9 @@ struct Cli {
     #[arg(short = 'H', long = "height")]
     height: Option<Size>,
 
+    #[arg(short = 'y', long = "yshift")]
+    yshift: Option<Size>,
+
     /// sub-command to run + its args
     #[arg(last = true)]
     command: Vec<String>,
@@ -70,7 +73,7 @@ async fn main() -> Result<(), AppError> {
     let original_mouse_warping = get_mouse_warping(&mut conn).await;
 
     // read out current mouse_warping config waybe through warp enum
-    conn.run_command("mouse_warping none").await?;
+    conn.run_command("mouse_warping container").await?;
 
     spawn_dropdown(&mut conn, &cli).await?;
 
@@ -124,7 +127,10 @@ fn resolve(opt: &Option<Size>, screen: i32, def_frac: f32) -> i32 {
     }
 }
 
-async fn compute_dimensions(conn: &mut Connection, opts: &Cli) -> Result<(i32, i32), AppError> {
+async fn compute_dimensions(
+    conn: &mut Connection,
+    opts: &Cli,
+) -> Result<(i32, i32, i32), AppError> {
     let out = conn
         .get_outputs()
         .await?
@@ -134,24 +140,27 @@ async fn compute_dimensions(conn: &mut Connection, opts: &Cli) -> Result<(i32, i
     Ok((
         resolve(&opts.width, out.rect.width as i32, 0.30),
         resolve(&opts.height, out.rect.height as i32, 0.40),
+        resolve(&opts.yshift, out.rect.height as i32, 0.1),
     ))
 }
 
 /// applies the rules for the app_id="dropdown" usign swayipc
 async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
-    let (w, h) = compute_dimensions(conn, cli).await?;
+    let (w, h, y) = compute_dimensions(conn, cli).await?;
+
+    println!("{}", y);
 
     let prefix = "for_window [app_id=\"dropdown\"]";
 
-    let rule = format!(
-        "
-         {prefix} floating enable, \
-         {prefix} resize set {w} {h}, \
-         {prefix} move position cursor, \
-         {prefix} move down 35, \
-         {prefix} focus",
-    );
-    conn.run_command(rule).await?;
+    conn.run_command(format!("{prefix} floating enable"))
+        .await?;
+    conn.run_command(format!("{prefix} resize set {w} {h}"))
+        .await?;
+    conn.run_command(format!("{prefix} move position cursor"))
+        .await?;
+    conn.run_command(format!("{prefix} move down {y}")).await?;
+    conn.run_command(format!("{prefix} focus")).await?;
+
     Ok(())
 }
 
