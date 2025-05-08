@@ -16,12 +16,12 @@ outputs = { self, nixpkgs, flake-utils, ... }:
           version   = "0.1.0";
           src       = self;
 
-          cargoHash = "sha256-OoiHm9ZAXYhcpxcYWkcabBHzJlQIcwkhuGPAb2b5H/A=";
 
-          installPhase = ''
-            mkdir -p "$out/bin"
-            cp "target/release/dropkitten" "$out/bin/dropkitten"
-          '';
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+
+          cargoVendorDir = "./vendor";
         };
       };
 
