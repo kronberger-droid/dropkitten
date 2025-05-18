@@ -10,6 +10,8 @@ use swayipc::{
 };
 use thiserror::Error;
 
+static APP_ID: &str = "test";
+
 #[derive(Debug, Clone)]
 enum Size {
     Px(u32),
@@ -70,14 +72,7 @@ async fn main() -> Result<(), AppError> {
 
     let mut conn = Connection::new().await?;
 
-    let original_mouse_warping = get_mouse_warping(&mut conn).await;
-
-    conn.run_command("mouse_warping none").await?;
-
     spawn_dropdown(&mut conn, &cli).await?;
-
-    conn.run_command(&format!("mouse_warping {}", original_mouse_warping))
-        .await?;
 
     Ok(())
 }
@@ -96,11 +91,6 @@ async fn get_mouse_warping(conn: &mut Connection) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
-// async fn get_mouse_warping(conn: &mut Connection) -> Option<Sring> {
-//     let config conn.
-//     Ok(())
-// }
-
 async fn focus_change_watcher(conn: &mut Connection) -> Result<(), AppError> {
     let subs_conn = Connection::new().await?;
 
@@ -109,8 +99,9 @@ async fn focus_change_watcher(conn: &mut Connection) -> Result<(), AppError> {
     while let Some(msg) = events.next().await {
         let Event::Window(ev) = msg? else { continue };
 
-        if ev.change == WindowChange::Focus && ev.container.app_id.as_deref() != Some("dropdown") {
-            conn.run_command("[app_id=\"dropdown\"] kill").await?;
+        if ev.change == WindowChange::Focus && ev.container.app_id.as_deref() != Some(APP_ID) {
+            conn.run_command(format!("[app_id=\"{}\"] kill", APP_ID))
+                .await?;
             break;
         }
     }
@@ -142,23 +133,45 @@ async fn compute_dimensions(
     ))
 }
 
-/// applies the rules for the app_id="dropdown" usign swayipc
+/// applies the rules for dropdown window using APP_ID
 async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
     let (w, h, y) = compute_dimensions(conn, cli).await?;
 
     println!("{}", y);
 
-    let command = format!(
-        "for_window [app_id=\"dropdown\"] floating enable, resize set {w} {h}, move position cursor"
-    );
+    // let command = format!(
+    //     "for_window [app_id=\"{APP_ID}\"] floating enable, resize set {w} {h}, move position cursor, move down {y}"
+    // );
 
-    conn.run_command(&command).await?;
+    conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] floating enable"))
+        .await?;
+
+    conn.run_command(format!(
+        "for_window [app_id=\"{APP_ID}\"] resize set {w} {h}"
+    ))
+    .await?;
+
+    conn.run_command(format!(
+        "for_window [app_id=\"{APP_ID}\"] move position cursor"
+    ))
+    .await?;
+
+    conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] move down {y}"))
+        .await?;
+
+    // conn.run_command(&command).await?;
 
     Ok(())
 }
 
 /// spawns the dropdown window
 async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
+    let original_mouse_warping = get_mouse_warping(conn).await;
+
+    if original_mouse_warping != "container" {
+        conn.run_command("mouse_warping container").await?;
+    }
+
     apply_rules(conn, cli).await?;
 
     let cmd_args: Vec<String> = if cli.command.is_empty() {
@@ -167,17 +180,24 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError
         cli.command.clone()
     };
 
-    let mut cmd = String::from("exec kitty --class dropdown --");
+    let mut cmd = format!("exec kitty --class {APP_ID} --");
 
     for a in cmd_args {
         cmd.push(' ');
         cmd.push_str(&escape(a.into()));
     }
+
     conn.run_command(cmd).await?;
 
-    conn.run_command("for [app_id=\"dropdown\"] focus").await?;
+    conn.run_command(format!("[app_id=\"{APP_ID}\"] focus"))
+        .await?;
 
     focus_change_watcher(conn).await?;
+
+    if original_mouse_warping != "container" {
+        conn.run_command(format!("mouse_warping {}", original_mouse_warping))
+            .await?;
+    }
 
     Ok(())
 }
