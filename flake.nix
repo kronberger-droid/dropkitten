@@ -16,7 +16,6 @@ outputs = { self, nixpkgs, flake-utils, ... }:
           version   = "0.1.0";
           src       = self;
 
-
           cargoLock = {
             lockFile = ./Cargo.lock;
           };
