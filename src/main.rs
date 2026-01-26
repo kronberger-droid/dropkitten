@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use futures::StreamExt;
 use regex::Regex;
 use shell_escape::unix::escape;
@@ -11,6 +11,13 @@ use swayipc::{
 use thiserror::Error;
 
 static APP_ID: &str = "test";
+
+#[derive(Debug, Clone, ValueEnum)]
+enum Terminal {
+    Kitty,
+    Alacritty,
+    Rio,
+}
 
 #[derive(Debug, Clone)]
 enum Size {
@@ -34,18 +41,22 @@ impl FromStr for Size {
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
+    /// terminal to use
+    #[arg(short = 't', long = "terminal", value_enum)]
+    terminal: Terminal,
+
     /// window width (pixels or fraction)
-    #[arg(short = 'W', long = "width")]
+    #[arg(short = 'w', long = "width")]
     width: Option<Size>,
 
     /// window height (pixels or fraction)
-    #[arg(short = 'H', long = "height")]
+    #[arg(short = 'h', long = "height")]
     height: Option<Size>,
 
     #[arg(short = 'y', long = "yshift")]
     yshift: Option<Size>,
 
-    /// sub-command to run + its args
+    /// subcommand to run + its arguments
     #[arg(last = true)]
     command: Vec<String>,
 }
@@ -137,12 +148,6 @@ async fn compute_dimensions(
 async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
     let (w, h, y) = compute_dimensions(conn, cli).await?;
 
-    println!("{}", y);
-
-    // let command = format!(
-    //     "for_window [app_id=\"{APP_ID}\"] floating enable, resize set {w} {h}, move position cursor, move down {y}"
-    // );
-
     conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] floating enable"))
         .await?;
 
@@ -158,8 +163,6 @@ async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
 
     conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] move down {y}"))
         .await?;
-
-    // conn.run_command(&command).await?;
 
     Ok(())
 }
@@ -180,12 +183,35 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError
         cli.command.clone()
     };
 
-    let mut cmd = format!("exec kitty --class {APP_ID} --");
-
-    for a in cmd_args {
-        cmd.push(' ');
-        cmd.push_str(&escape(a.into()));
-    }
+    let cmd = match cli.terminal {
+        Terminal::Kitty => {
+            let mut cmd = format!("exec kitty --class {APP_ID} --");
+            for a in &cmd_args {
+                cmd.push(' ');
+                cmd.push_str(&escape(a.clone().into()));
+            }
+            cmd
+        }
+        Terminal::Alacritty => {
+            let mut cmd = format!("exec alacritty --class {APP_ID}");
+            if !cmd_args.is_empty() {
+                cmd.push_str(" -e");
+                for a in &cmd_args {
+                    cmd.push(' ');
+                    cmd.push_str(&escape(a.clone().into()));
+                }
+            }
+            cmd
+        }
+        Terminal::Rio => {
+            let mut cmd = format!("exec rio --class {APP_ID}");
+            for a in &cmd_args {
+                cmd.push(' ');
+                cmd.push_str(&escape(a.clone().into()));
+            }
+            cmd
+        }
+    };
 
     conn.run_command(cmd).await?;
 
