@@ -63,6 +63,22 @@
           mkdir -p "$CARGO_HOME" "$RUSTUP_HOME"
         '';
       in {
+        packages = {
+          dropkitten = pkgs.rustPlatform.buildRustPackage {
+            pname = "dropkitten";
+            version = "0.2.0";
+            src = self;
+
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
+
+            cargoVendorDir = "./vendor";
+          };
+
+          default = self.packages.${system}.dropkitten;
+        };
+
         # Clean development shell for Linux development
         devShells.default = pkgs.mkShell {
           name = "rust dev shell (Linux)";
