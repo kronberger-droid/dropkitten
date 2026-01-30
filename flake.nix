@@ -1,102 +1,39 @@
 {
-  description = "Rust development shell with GUI support";
+  description = "dropkitten - window drop utility";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    fenix.url = "github:nix-community/fenix";
-    rust-overlay.url = "github:oxalica/rust-overlay";
-  };
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-    fenix,
-    rust-overlay,
-    ...
-  }:
-    flake-utils.lib.eachDefaultSystem (
-      system: let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [fenix.overlays.default rust-overlay.overlays.default];
+  outputs = { self, nixpkgs }:
+    let
+      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      pkgsFor = system: nixpkgs.legacyPackages.${system};
+    in {
+      packages = forAllSystems (system: {
+        dropkitten = (pkgsFor system).rustPlatform.buildRustPackage {
+          pname = "dropkitten";
+          version = "0.2.0";
+          src = self;
+          cargoLock.lockFile = ./Cargo.lock;
         };
 
-        # Rust toolchain configuration
-        rustTools = {
-          stable = fenix.packages.${system}.combine [
-            fenix.packages.${system}.stable.toolchain
-            fenix.packages.${system}.targets.x86_64-pc-windows-gnu.stable.rust-std
-          ];
-          analyzer = fenix.packages.${system}.latest.rust-analyzer;
-        };
+        default = self.packages.${system}.dropkitten;
+      });
 
-        # Development tools
-        devTools = with pkgs; [
-          cargo-expand
-          pkg-config
-          gcc
-        ];
-
-        # Windows cross-compilation tools
-        windowsTools = with pkgs; [
-          pkgsCross.mingwW64.stdenv.cc
-          pkgsCross.mingwW64.windows.pthreads
-        ];
-
-        # Core Rust development dependencies
-        rustDeps =
-          [
-            rustTools.stable
-            rustTools.analyzer
-          ]
-          ++ devTools;
-
-        # Base shell configuration
-        baseShellHook = ''
-          echo "Using Rust toolchain: $(rustc --version)"
-          export CARGO_HOME="$HOME/.cargo"
-          export RUSTUP_HOME="$HOME/.rustup"
-
-
-          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME"
-        '';
-      in {
-        packages = {
-          dropkitten = pkgs.rustPlatform.buildRustPackage {
-            pname = "dropkitten";
-            version = "0.2.0";
-            src = self;
-
-            cargoLock = {
-              lockFile = ./Cargo.lock;
-            };
-
-            cargoVendorDir = "./vendor";
+      devShells = forAllSystems (system:
+        let pkgs = pkgsFor system;
+        in {
+          default = pkgs.mkShell {
+            name = "dropkitten-dev";
+            buildInputs = with pkgs; [
+              cargo
+              rustc
+              rustfmt
+              clippy
+              rust-analyzer
+              pkg-config
+            ];
           };
-
-          default = self.packages.${system}.dropkitten;
-        };
-
-        # Clean development shell for Linux development
-        devShells.default = pkgs.mkShell {
-          name = "rust dev shell (Linux)";
-          buildInputs = rustDeps;
-          shellHook = baseShellHook;
-        };
-
-        # Windows cross-compilation shell
-        devShells.windows = pkgs.mkShell {
-          name = "rust dev shell (Windows cross-compile)";
-          buildInputs = rustDeps ++ windowsTools;
-          shellHook =
-            baseShellHook
-            + ''
-              echo "Windows cross-compilation enabled"
-              echo "Build with: cargo build --target x86_64-pc-windows-gnu"
-            '';
-        };
-      }
-    );
+        });
+    };
 }
