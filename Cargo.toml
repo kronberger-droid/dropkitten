@@ -4,10 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-swayipc = { version = "2.3.0", features = ["async", "event_stream"] }
-tokio = { version = "1.0", features = ["full"] }
+swayipc-async = "3.0"
+futures-lite = "2"
 clap = { version = "4.0", features = ["derive"] }
 shell-escape = "0.1"
-thiserror = "1.0"
-futures = "0.3"
-regex = "1.11.1"

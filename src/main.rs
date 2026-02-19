@@ -1,14 +1,10 @@
 use clap::{Parser, ValueEnum};
-use futures::StreamExt;
-use regex::Regex;
+use futures_lite::StreamExt;
 use shell_escape::unix::escape;
-use std::env;
 use std::str::FromStr;
-use swayipc::{
-    Connection, EventType,
-    reply::{Event, WindowChange},
-};
-use thiserror::Error;
+use swayipc_async::{Connection, Event, EventType, WindowChange};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 static APP_ID: &str = "test";
 
@@ -27,7 +23,7 @@ enum Size {
 
 impl FromStr for Size {
     type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         if let Ok(px) = s.parse::<u32>() {
             Ok(Size::Px(px))
         } else if let Ok(fr) = s.parse::<f32>() {
@@ -67,31 +63,13 @@ struct Cli {
     command: Vec<String>,
 }
 
-#[derive(Debug, Error)]
-enum AppError {
-    #[error("Sway IPC error: {0}")]
-    Swayipc(String),
-    #[error("Environment error: {0}")]
-    Env(#[from] env::VarError),
-    #[error("No active output detected")]
-    NoOutput,
-}
-
-impl From<swayipc::Error> for AppError {
-    fn from(e: swayipc::Error) -> Self {
-        AppError::Swayipc(e.to_string())
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<(), AppError> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let mut conn = Connection::new().await?;
-
-    spawn_dropdown(&mut conn, &cli).await?;
-
-    Ok(())
+    futures_lite::future::block_on(async {
+        let mut conn = Connection::new().await?;
+        spawn_dropdown(&mut conn, &cli).await
+    })
 }
 
 async fn get_mouse_warping(conn: &mut Connection) -> String {
@@ -100,18 +78,20 @@ async fn get_mouse_warping(conn: &mut Connection) -> String {
         Err(_) => return "none".to_string(),
     };
 
-    let re = Regex::new(r"mouse_warping\s+(\w+)").unwrap();
-
-    re.captures(&config)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
+    config
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let rest = trimmed.strip_prefix("mouse_warping")?;
+            rest.split_whitespace().next().map(String::from)
+        })
         .unwrap_or_else(|| "none".to_string())
 }
 
-async fn focus_change_watcher(conn: &mut Connection) -> Result<(), AppError> {
+async fn focus_change_watcher(conn: &mut Connection) -> Result<()> {
     let subs_conn = Connection::new().await?;
 
-    let mut events = subs_conn.subscribe(&[EventType::Window]).await?;
+    let mut events = subs_conn.subscribe([EventType::Window]).await?;
 
     while let Some(msg) = events.next().await {
         let Event::Window(ev) = msg? else { continue };
@@ -136,25 +116,25 @@ fn resolve(opt: &Option<Size>, screen: i32, def_frac: f32) -> i32 {
 async fn compute_dimensions(
     conn: &mut Connection,
     opts: &Cli,
-) -> Result<(i32, i32, i32, i32, i64, i64), AppError> {
+) -> Result<(i32, i32, i32, i32, i32, i32)> {
     let out = conn
         .get_outputs()
         .await?
         .into_iter()
         .find(|o| o.active)
-        .ok_or(AppError::NoOutput)?;
+        .ok_or("no active output")?;
     Ok((
-        resolve(&opts.width, out.rect.width as i32, 0.30),
-        resolve(&opts.height, out.rect.height as i32, 0.40),
-        resolve(&opts.yshift, out.rect.height as i32, 0.1),
-        resolve(&opts.xshift, out.rect.width as i32, 0.0),
+        resolve(&opts.width, out.rect.width, 0.30),
+        resolve(&opts.height, out.rect.height, 0.40),
+        resolve(&opts.yshift, out.rect.height, 0.1),
+        resolve(&opts.xshift, out.rect.width, 0.0),
         out.rect.x,
         out.rect.y,
     ))
 }
 
 /// Applies the for_window rules for dropdown window (float + resize + initial placement)
-async fn apply_rules(conn: &mut Connection, cli: &Cli, w: i32, h: i32) -> Result<(), AppError> {
+async fn apply_rules(conn: &mut Connection, cli: &Cli, w: i32, h: i32) -> Result<()> {
     conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] floating enable"))
         .await?;
 
@@ -179,7 +159,7 @@ async fn apply_rules(conn: &mut Connection, cli: &Cli, w: i32, h: i32) -> Result
 }
 
 /// spawns the dropdown window
-async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
+async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<()> {
     let original_mouse_warping = get_mouse_warping(conn).await;
 
     if original_mouse_warping != "container" {
@@ -191,7 +171,7 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError
 
     // Subscribe BEFORE spawning so we don't miss the Window::New event
     let subs_conn = Connection::new().await?;
-    let mut events = subs_conn.subscribe(&[EventType::Window]).await?;
+    let mut events = subs_conn.subscribe([EventType::Window]).await?;
 
     let cmd_args: Vec<String> = if cli.command.is_empty() {
         Vec::new()
@@ -238,11 +218,11 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError
         if ev.change == WindowChange::New && ev.container.app_id.as_deref() == Some(APP_ID) {
             let rect = ev.container.rect;
 
-            let final_x = rect.x + x as i64;
+            let final_x = rect.x + x;
             let final_y = if cli.center {
-                rect.y + y as i64
+                rect.y + y
             } else {
-                out_y + y as i64
+                out_y + y
             };
 
             conn.run_command(format!(
