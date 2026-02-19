@@ -2,7 +2,7 @@ use clap::{Parser, ValueEnum};
 use futures_lite::StreamExt;
 use shell_escape::unix::escape;
 use std::str::FromStr;
-use swayipc_async::{Connection, Event, EventType, WindowChange};
+use swayipc_async::{Connection, Event, EventType, Node, WindowChange};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -105,6 +105,23 @@ async fn focus_change_watcher(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
+fn find_node_by_app_id(node: &Node, app_id: &str) -> Option<i32> {
+    if node.app_id.as_deref() == Some(app_id) {
+        return Some(node.rect.x);
+    }
+    for child in &node.nodes {
+        if let Some(x) = find_node_by_app_id(child, app_id) {
+            return Some(x);
+        }
+    }
+    for child in &node.floating_nodes {
+        if let Some(x) = find_node_by_app_id(child, app_id) {
+            return Some(x);
+        }
+    }
+    None
+}
+
 fn resolve(opt: &Option<Size>, screen: i32, def_frac: f32) -> i32 {
     match opt {
         Some(Size::Px(px)) => *px as i32,
@@ -133,8 +150,8 @@ async fn compute_dimensions(
     ))
 }
 
-/// Applies the for_window rules for dropdown window (float + resize + initial placement)
-async fn apply_rules(conn: &mut Connection, cli: &Cli, w: i32, h: i32) -> Result<()> {
+/// Applies the for_window rules for dropdown window (float + resize)
+async fn apply_rules(conn: &mut Connection, w: i32, h: i32) -> Result<()> {
     conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] floating enable"))
         .await?;
 
@@ -142,18 +159,6 @@ async fn apply_rules(conn: &mut Connection, cli: &Cli, w: i32, h: i32) -> Result
         "for_window [app_id=\"{APP_ID}\"] resize set {w} {h}"
     ))
     .await?;
-
-    if cli.center {
-        conn.run_command(format!(
-            "for_window [app_id=\"{APP_ID}\"] move position center"
-        ))
-        .await?;
-    } else {
-        conn.run_command(format!(
-            "for_window [app_id=\"{APP_ID}\"] move position cursor"
-        ))
-        .await?;
-    }
 
     Ok(())
 }
@@ -167,7 +172,7 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<()> {
     }
 
     let (w, h, y, x, _out_x, out_y) = compute_dimensions(conn, cli).await?;
-    apply_rules(conn, cli, w, h).await?;
+    apply_rules(conn, w, h).await?;
 
     // Subscribe BEFORE spawning so we don't miss the Window::New event
     let subs_conn = Connection::new().await?;
@@ -216,11 +221,27 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<()> {
         let Event::Window(ev) = msg? else { continue };
 
         if ev.change == WindowChange::New && ev.container.app_id.as_deref() == Some(APP_ID) {
-            let rect = ev.container.rect;
+            // Explicitly place at cursor (for_window rule may not have applied yet)
+            if cli.center {
+                conn.run_command(format!(
+                    "[app_id=\"{APP_ID}\"] move position center"
+                ))
+                .await?;
+            } else {
+                conn.run_command(format!(
+                    "[app_id=\"{APP_ID}\"] move position cursor"
+                ))
+                .await?;
+            }
 
-            let final_x = rect.x + x;
+            // Now query the tree to get the actual X position after placement
+            let tree = conn.get_tree().await?;
+            let wx = find_node_by_app_id(&tree, APP_ID).unwrap_or(0);
+
+            let final_x = wx + x;
             let final_y = if cli.center {
-                rect.y + y
+                let wy = tree.rect.height / 2; // approximate center Y
+                wy + y
             } else {
                 out_y + y
             };
