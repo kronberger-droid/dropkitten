@@ -46,15 +46,21 @@ struct Cli {
     terminal: Terminal,
 
     /// window width (pixels or fraction)
-    #[arg(short = 'w', long = "width")]
+    #[arg(short = 'W', long = "width")]
     width: Option<Size>,
 
     /// window height (pixels or fraction)
-    #[arg(short = 'h', long = "height")]
+    #[arg(short = 'H', long = "height")]
     height: Option<Size>,
 
     #[arg(short = 'y', long = "yshift")]
     yshift: Option<Size>,
+
+    #[arg(short = 'x', long = "xshift")]
+    xshift: Option<Size>,
+
+    #[arg(short = 'c', long = "center")]
+    center: bool,
 
     /// subcommand to run + its arguments
     #[arg(last = true)]
@@ -130,7 +136,7 @@ fn resolve(opt: &Option<Size>, screen: i32, def_frac: f32) -> i32 {
 async fn compute_dimensions(
     conn: &mut Connection,
     opts: &Cli,
-) -> Result<(i32, i32, i32), AppError> {
+) -> Result<(i32, i32, i32, i32, i64, i64), AppError> {
     let out = conn
         .get_outputs()
         .await?
@@ -141,13 +147,14 @@ async fn compute_dimensions(
         resolve(&opts.width, out.rect.width as i32, 0.30),
         resolve(&opts.height, out.rect.height as i32, 0.40),
         resolve(&opts.yshift, out.rect.height as i32, 0.1),
+        resolve(&opts.xshift, out.rect.width as i32, 0.0),
+        out.rect.x,
+        out.rect.y,
     ))
 }
 
-/// applies the rules for dropdown window using APP_ID
-async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
-    let (w, h, y) = compute_dimensions(conn, cli).await?;
-
+/// Applies the for_window rules for dropdown window (float + resize + initial placement)
+async fn apply_rules(conn: &mut Connection, cli: &Cli, w: i32, h: i32) -> Result<(), AppError> {
     conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] floating enable"))
         .await?;
 
@@ -156,13 +163,17 @@ async fn apply_rules(conn: &mut Connection, cli: &Cli) -> Result<(), AppError> {
     ))
     .await?;
 
-    conn.run_command(format!(
-        "for_window [app_id=\"{APP_ID}\"] move position cursor"
-    ))
-    .await?;
-
-    conn.run_command(format!("for_window [app_id=\"{APP_ID}\"] move down {y}"))
+    if cli.center {
+        conn.run_command(format!(
+            "for_window [app_id=\"{APP_ID}\"] move position center"
+        ))
         .await?;
+    } else {
+        conn.run_command(format!(
+            "for_window [app_id=\"{APP_ID}\"] move position cursor"
+        ))
+        .await?;
+    }
 
     Ok(())
 }
@@ -175,7 +186,12 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError
         conn.run_command("mouse_warping container").await?;
     }
 
-    apply_rules(conn, cli).await?;
+    let (w, h, y, x, _out_x, out_y) = compute_dimensions(conn, cli).await?;
+    apply_rules(conn, cli, w, h).await?;
+
+    // Subscribe BEFORE spawning so we don't miss the Window::New event
+    let subs_conn = Connection::new().await?;
+    let mut events = subs_conn.subscribe(&[EventType::Window]).await?;
 
     let cmd_args: Vec<String> = if cli.command.is_empty() {
         Vec::new()
@@ -214,6 +230,28 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<(), AppError
     };
 
     conn.run_command(cmd).await?;
+
+    // Wait for window to appear, then apply final positioning
+    while let Some(msg) = events.next().await {
+        let Event::Window(ev) = msg? else { continue };
+
+        if ev.change == WindowChange::New && ev.container.app_id.as_deref() == Some(APP_ID) {
+            let rect = ev.container.rect;
+
+            let final_x = rect.x + x as i64;
+            let final_y = if cli.center {
+                rect.y + y as i64
+            } else {
+                out_y + y as i64
+            };
+
+            conn.run_command(format!(
+                "[app_id=\"{APP_ID}\"] move absolute position {final_x} {final_y}"
+            ))
+            .await?;
+            break;
+        }
+    }
 
     conn.run_command(format!("[app_id=\"{APP_ID}\"] focus"))
         .await?;
