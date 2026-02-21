@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 swayipc-async = "3.0"
+niri-ipc = "=25.8.0"
 futures-lite = "2"
 clap = { version = "4.0", features = ["derive"] }
 shell-escape = "0.1"
