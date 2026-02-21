@@ -167,10 +167,6 @@ async fn apply_rules(conn: &mut Connection, w: i32, h: i32) -> Result<()> {
 async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<()> {
     let original_mouse_warping = get_mouse_warping(conn).await;
 
-    if original_mouse_warping != "container" {
-        conn.run_command("mouse_warping container").await?;
-    }
-
     let (w, h, y, x, _out_x, out_y) = compute_dimensions(conn, cli).await?;
     apply_rules(conn, w, h).await?;
 
@@ -256,6 +252,12 @@ async fn spawn_dropdown(conn: &mut Connection, cli: &Cli) -> Result<()> {
 
     conn.run_command(format!("[app_id=\"{APP_ID}\"] focus"))
         .await?;
+
+    // Set mouse_warping container AFTER positioning so the cursor follows
+    // into the dropdown, but doesn't interfere with `move position cursor`
+    if original_mouse_warping != "container" {
+        conn.run_command("mouse_warping container").await?;
+    }
 
     focus_change_watcher(conn).await?;
 
