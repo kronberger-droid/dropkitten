@@ -78,10 +78,17 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         }
     };
 
-    // Float + resize
+    // Float and immediately park offscreen so the default-sized window is never visible
     send(&mut cmd, Request::Action(Action::MoveWindowToFloating {
         id: Some(window_id),
     }))?;
+    send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
+        id: Some(window_id),
+        x: PositionChange::SetFixed(-9999.0),
+        y: PositionChange::SetFixed(-9999.0),
+    }))?;
+
+    // Resize while offscreen
     send(&mut cmd, Request::Action(Action::SetWindowWidth {
         id: Some(window_id),
         change: SizeChange::SetFixed(w),
@@ -91,7 +98,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         change: SizeChange::SetFixed(h),
     }))?;
 
-    // Position
+    // Move to final position
     if cli.center {
         send(&mut cmd, Request::Action(Action::CenterWindow {
             id: Some(window_id),
