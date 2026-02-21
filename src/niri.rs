@@ -3,6 +3,10 @@ use niri_ipc::{Action, Event, PositionChange, Request, Response, SizeChange};
 
 use crate::{resolve, Cli, Terminal, APP_ID, Result};
 
+fn send(sock: &mut Socket, req: Request) -> Result<Response> {
+    sock.send(req)?.map_err(|e| e.into())
+}
+
 fn build_spawn_command(cli: &Cli) -> Vec<String> {
     let cmd_args = &cli.command;
 
@@ -36,16 +40,14 @@ fn build_spawn_command(cli: &Cli) -> Vec<String> {
 pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // Open event stream socket BEFORE spawning so we don't miss the open event
     let mut ev_sock = Socket::connect()?;
-    let reply = ev_sock.send(Request::EventStream)?;
-    reply.map_err(|e| format!("niri EventStream error: {e}"))?;
+    ev_sock.send(Request::EventStream)?.map_err(|e| format!("niri EventStream error: {e}"))?;
     let mut next_event = ev_sock.read_events();
 
     // Command socket for sending actions
     let mut cmd = Socket::connect()?;
 
     // Query focused output dimensions
-    let reply = cmd.send(Request::FocusedOutput)?;
-    let output = match reply.map_err(|e| format!("niri FocusedOutput error: {e}"))? {
+    let output = match send(&mut cmd, Request::FocusedOutput)? {
         Response::FocusedOutput(Some(out)) => out,
         _ => return Err("no focused output".into()),
     };
@@ -58,15 +60,13 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
 
     let w = resolve(&cli.width, out_w, 0.30);
     let h = resolve(&cli.height, out_h, 0.40);
-    let yshift = resolve(&cli.yshift, out_h, 0.1);
+    let yshift = resolve(&cli.yshift, out_h, 0.02);
     let xshift = resolve(&cli.xshift, out_w, 0.0);
 
     // Spawn the terminal
-    let spawn_cmd = build_spawn_command(cli);
-    let reply = cmd.send(Request::Action(Action::Spawn {
-        command: spawn_cmd,
+    send(&mut cmd, Request::Action(Action::Spawn {
+        command: build_spawn_command(cli),
     }))?;
-    reply.map_err(|e| format!("niri Spawn error: {e}"))?;
 
     // Wait for window to appear
     let window_id = loop {
@@ -78,56 +78,43 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         }
     };
 
-    // Float the window
-    let reply = cmd.send(Request::Action(Action::MoveWindowToFloating {
+    // Float + resize
+    send(&mut cmd, Request::Action(Action::MoveWindowToFloating {
         id: Some(window_id),
     }))?;
-    reply.map_err(|e| format!("niri MoveWindowToFloating error: {e}"))?;
-
-    // Resize
-    let reply = cmd.send(Request::Action(Action::SetWindowWidth {
+    send(&mut cmd, Request::Action(Action::SetWindowWidth {
         id: Some(window_id),
         change: SizeChange::SetFixed(w),
     }))?;
-    reply.map_err(|e| format!("niri SetWindowWidth error: {e}"))?;
-
-    let reply = cmd.send(Request::Action(Action::SetWindowHeight {
+    send(&mut cmd, Request::Action(Action::SetWindowHeight {
         id: Some(window_id),
         change: SizeChange::SetFixed(h),
     }))?;
-    reply.map_err(|e| format!("niri SetWindowHeight error: {e}"))?;
 
     // Position
     if cli.center {
-        let reply = cmd.send(Request::Action(Action::CenterWindow {
+        send(&mut cmd, Request::Action(Action::CenterWindow {
             id: Some(window_id),
         }))?;
-        reply.map_err(|e| format!("niri CenterWindow error: {e}"))?;
 
-        // Apply shifts on top of center if specified
         if xshift != 0 || yshift != 0 {
-            let reply = cmd.send(Request::Action(Action::MoveFloatingWindow {
+            send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
                 id: Some(window_id),
                 x: PositionChange::AdjustFixed(xshift as f64),
                 y: PositionChange::AdjustFixed(yshift as f64),
             }))?;
-            reply.map_err(|e| format!("niri MoveFloatingWindow error: {e}"))?;
         }
     } else {
-        let final_x = out_x as f64 + xshift as f64;
-        let final_y = out_y as f64 + yshift as f64;
-
-        let reply = cmd.send(Request::Action(Action::MoveFloatingWindow {
+        let right_x = out_x + out_w - w + xshift;
+        send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
             id: Some(window_id),
-            x: PositionChange::SetFixed(final_x),
-            y: PositionChange::SetFixed(final_y),
+            x: PositionChange::SetFixed(right_x as f64),
+            y: PositionChange::SetFixed(out_y as f64 + yshift as f64),
         }))?;
-        reply.map_err(|e| format!("niri MoveFloatingWindow error: {e}"))?;
     }
 
     // Focus the window
-    let reply = cmd.send(Request::Action(Action::FocusWindow { id: window_id }))?;
-    reply.map_err(|e| format!("niri FocusWindow error: {e}"))?;
+    send(&mut cmd, Request::Action(Action::FocusWindow { id: window_id }))?;
 
     // Watch for focus loss
     loop {
@@ -135,10 +122,9 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         if let Event::WindowFocusChanged { id } = event
             && id != Some(window_id)
         {
-            let reply = cmd.send(Request::Action(Action::CloseWindow {
+            send(&mut cmd, Request::Action(Action::CloseWindow {
                 id: Some(window_id),
             }))?;
-            reply.map_err(|e| format!("niri CloseWindow error: {e}"))?;
             break;
         }
     }
