@@ -53,8 +53,6 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     };
 
     let logical = output.logical.ok_or("output has no logical info")?;
-    let out_x = logical.x;
-    let out_y = logical.y;
     let out_w = logical.width as i32;
     let out_h = logical.height as i32;
 
@@ -98,25 +96,16 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         change: SizeChange::SetFixed(h),
     }))?;
 
-    // Move to final position
-    if cli.center {
-        send(&mut cmd, Request::Action(Action::CenterWindow {
-            id: Some(window_id),
-        }))?;
+    // Move to final position -- center by default, shifts nudge from there
+    send(&mut cmd, Request::Action(Action::CenterWindow {
+        id: Some(window_id),
+    }))?;
 
-        if xshift != 0 || yshift != 0 {
-            send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
-                id: Some(window_id),
-                x: PositionChange::AdjustFixed(xshift as f64),
-                y: PositionChange::AdjustFixed(yshift as f64),
-            }))?;
-        }
-    } else {
-        let right_x = out_x + out_w - w + xshift;
+    if xshift != 0 || yshift != 0 {
         send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
             id: Some(window_id),
-            x: PositionChange::SetFixed(right_x as f64),
-            y: PositionChange::SetFixed(out_y as f64 + yshift as f64),
+            x: PositionChange::AdjustFixed(xshift as f64),
+            y: PositionChange::AdjustFixed(yshift as f64),
         }))?;
     }
 
