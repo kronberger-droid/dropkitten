@@ -76,17 +76,12 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         }
     };
 
-    // Float and immediately park offscreen so the default-sized window is never visible
+    // Float the window -- niri centers floating windows automatically
     send(&mut cmd, Request::Action(Action::MoveWindowToFloating {
         id: Some(window_id),
     }))?;
-    send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
-        id: Some(window_id),
-        x: PositionChange::SetFixed(-9999.0),
-        y: PositionChange::SetFixed(-9999.0),
-    }))?;
 
-    // Resize while offscreen
+    // Resize (niri keeps the window centered)
     send(&mut cmd, Request::Action(Action::SetWindowWidth {
         id: Some(window_id),
         change: SizeChange::SetFixed(w),
@@ -96,11 +91,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         change: SizeChange::SetFixed(h),
     }))?;
 
-    // Move to final position -- center by default, shifts nudge from there
-    send(&mut cmd, Request::Action(Action::CenterWindow {
-        id: Some(window_id),
-    }))?;
-
+    // Apply position shifts if requested
     if xshift != 0 || yshift != 0 {
         send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
             id: Some(window_id),
