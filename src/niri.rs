@@ -46,9 +46,6 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // Command socket for sending actions
     let mut cmd = Socket::connect()?;
 
-    let needs_resize = cli.width.is_some() || cli.height.is_some();
-    let needs_shift = cli.xshift.is_some() || cli.yshift.is_some();
-
     // Spawn the terminal
     send(&mut cmd, Request::Action(Action::Spawn {
         command: build_spawn_command(cli),
@@ -64,46 +61,47 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
         }
     };
 
-    // Float the window -- niri centers floating windows automatically
+    // Float the window
     send(&mut cmd, Request::Action(Action::MoveWindowToFloating {
         id: Some(window_id),
     }))?;
 
-    // Only resize/reposition when explicitly requested
-    if needs_resize || needs_shift {
-        let output = match send(&mut cmd, Request::FocusedOutput)? {
-            Response::FocusedOutput(Some(out)) => out,
-            _ => return Err("no focused output".into()),
-        };
-        let logical = output.logical.ok_or("output has no logical info")?;
-        let out_w = logical.width as i32;
-        let out_h = logical.height as i32;
+    // Fetch output dimensions for sizing and positioning
+    let output = match send(&mut cmd, Request::FocusedOutput)? {
+        Response::FocusedOutput(Some(out)) => out,
+        _ => return Err("no focused output".into()),
+    };
+    let logical = output.logical.ok_or("output has no logical info")?;
+    let out_w = logical.width as i32;
+    let out_h = logical.height as i32;
 
-        if let Some(ref width) = cli.width {
-            let w = resolve(&Some(width.clone()), out_w, 0.0);
-            send(&mut cmd, Request::Action(Action::SetWindowWidth {
-                id: Some(window_id),
-                change: SizeChange::SetFixed(w),
-            }))?;
-        }
-        if let Some(ref height) = cli.height {
-            let h = resolve(&Some(height.clone()), out_h, 0.0);
-            send(&mut cmd, Request::Action(Action::SetWindowHeight {
-                id: Some(window_id),
-                change: SizeChange::SetFixed(h),
-            }))?;
-        }
+    // Set size with sway-compatible defaults (30% width, 40% height)
+    let w = resolve(&cli.width, out_w, 0.30);
+    send(&mut cmd, Request::Action(Action::SetWindowWidth {
+        id: Some(window_id),
+        change: SizeChange::SetFixed(w),
+    }))?;
 
-        if needs_shift {
-            let xshift = resolve(&cli.xshift, out_w, 0.0);
-            let yshift = resolve(&cli.yshift, out_h, 0.0);
-            send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
-                id: Some(window_id),
-                x: PositionChange::AdjustFixed(xshift as f64),
-                y: PositionChange::AdjustFixed(yshift as f64),
-            }))?;
-        }
-    }
+    let h = resolve(&cli.height, out_h, 0.40);
+    send(&mut cmd, Request::Action(Action::SetWindowHeight {
+        id: Some(window_id),
+        change: SizeChange::SetFixed(h),
+    }))?;
+
+    // Position: centered horizontally, 10% from top (or true center with --center)
+    let xshift = resolve(&cli.xshift, out_w, 0.0);
+    let yshift = resolve(&cli.yshift, out_h, 0.0);
+    let x = (out_w - w) / 2 + xshift;
+    let y = if cli.center {
+        (out_h - h) / 2 + yshift
+    } else {
+        resolve(&cli.yshift, out_h, 0.10)
+    };
+    send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
+        id: Some(window_id),
+        x: PositionChange::SetFixed(x as f64),
+        y: PositionChange::SetFixed(y as f64),
+    }))?;
 
     // Focus the window
     send(&mut cmd, Request::Action(Action::FocusWindow { id: window_id }))?;
