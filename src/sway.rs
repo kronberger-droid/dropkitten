@@ -1,6 +1,6 @@
 use futures_lite::StreamExt;
 use shell_escape::unix::escape;
-use swayipc_async::{Connection, Event, EventType, Node, WindowChange};
+use swayipc_async::{Connection, Event, EventType, WindowChange};
 
 use crate::{resolve, Cli, Terminal, APP_ID, Result};
 
@@ -36,41 +36,26 @@ async fn focus_change_watcher(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-fn find_node_by_app_id(node: &Node, app_id: &str) -> Option<i32> {
-    if node.app_id.as_deref() == Some(app_id) {
-        return Some(node.rect.x);
-    }
-    for child in &node.nodes {
-        if let Some(x) = find_node_by_app_id(child, app_id) {
-            return Some(x);
-        }
-    }
-    for child in &node.floating_nodes {
-        if let Some(x) = find_node_by_app_id(child, app_id) {
-            return Some(x);
-        }
-    }
-    None
+struct OutputRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 }
 
-async fn compute_dimensions(
-    conn: &mut Connection,
-    opts: &Cli,
-) -> Result<(i32, i32, i32, i32, i32, i32)> {
+async fn get_focused_output(conn: &mut Connection) -> Result<OutputRect> {
     let out = conn
         .get_outputs()
         .await?
         .into_iter()
-        .find(|o| o.active)
-        .ok_or("no active output")?;
-    Ok((
-        resolve(&opts.width, out.rect.width, 0.30),
-        resolve(&opts.height, out.rect.height, 0.40),
-        resolve(&opts.yshift, out.rect.height, 0.1),
-        resolve(&opts.xshift, out.rect.width, 0.0),
-        out.rect.x,
-        out.rect.y,
-    ))
+        .find(|o| o.focused)
+        .ok_or("no focused output")?;
+    Ok(OutputRect {
+        x: out.rect.x,
+        y: out.rect.y,
+        width: out.rect.width,
+        height: out.rect.height,
+    })
 }
 
 async fn apply_rules(conn: &mut Connection, w: i32, h: i32) -> Result<()> {
@@ -91,8 +76,22 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     let mut conn = Connection::new().await?;
     let original_mouse_warping = get_mouse_warping(&mut conn).await;
 
-    let (w, h, y, x, _out_x, out_y) = compute_dimensions(&mut conn, cli).await?;
+    let out = get_focused_output(&mut conn).await?;
+
+    let w = resolve(&cli.width, out.width, 0.30);
+    let h = resolve(&cli.height, out.height, 0.40);
+    let xshift = resolve(&cli.xshift, out.width, 0.0);
+    let yshift = resolve(&cli.yshift, out.height, if cli.center { 0.0 } else { 0.1 });
+
     apply_rules(&mut conn, w, h).await?;
+
+    // Compute final absolute position directly from the focused output rect
+    let final_x = out.x + (out.width - w) / 2 + xshift;
+    let final_y = if cli.center {
+        out.y + (out.height - h) / 2 + yshift
+    } else {
+        out.y + yshift
+    };
 
     // Subscribe BEFORE spawning so we don't miss the Window::New event
     let subs_conn = Connection::new().await?;
@@ -141,29 +140,6 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
         let Event::Window(ev) = msg? else { continue };
 
         if ev.change == WindowChange::New && ev.container.app_id.as_deref() == Some(APP_ID) {
-            if cli.center {
-                conn.run_command(format!(
-                    "[app_id=\"{APP_ID}\"] move position center"
-                ))
-                .await?;
-            } else {
-                conn.run_command(format!(
-                    "[app_id=\"{APP_ID}\"] move position cursor"
-                ))
-                .await?;
-            }
-
-            let tree = conn.get_tree().await?;
-            let wx = find_node_by_app_id(&tree, APP_ID).unwrap_or(0);
-
-            let final_x = wx + x;
-            let final_y = if cli.center {
-                let wy = tree.rect.height / 2;
-                wy + y
-            } else {
-                out_y + y
-            };
-
             conn.run_command(format!(
                 "[app_id=\"{APP_ID}\"] move absolute position {final_x} {final_y}"
             ))

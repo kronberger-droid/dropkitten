@@ -106,7 +106,19 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // Focus the window
     send(&mut cmd, Request::Action(Action::FocusWindow { id: window_id }))?;
 
-    // Watch for focus loss
+    // Drain stale events until we confirm our window has focus.
+    // Setup commands (float, resize, move) may have queued intermediate
+    // WindowFocusChanged events that would cause a premature close.
+    loop {
+        let event = next_event()?;
+        if let Event::WindowFocusChanged { id } = event
+            && id == Some(window_id)
+        {
+            break;
+        }
+    }
+
+    // Now watch for actual focus loss
     loop {
         let event = next_event()?;
         if let Event::WindowFocusChanged { id } = event
