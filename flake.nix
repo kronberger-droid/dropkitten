@@ -14,7 +14,10 @@
           pname = "dropkitten";
           version = "0.2.0";
           src = self;
-          cargoLock.lockFile = ./Cargo.lock;
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            allowBuiltinFetchGit = true;
+          };
         };
 
         default = self.packages.${system}.dropkitten;
