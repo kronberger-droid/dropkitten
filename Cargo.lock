@@ -178,6 +178,7 @@ dependencies = [
  "clap",
  "futures-lite",
  "niri-ipc",
+ "serde_json",
  "shell-escape",
  "swayipc-async",
 ]

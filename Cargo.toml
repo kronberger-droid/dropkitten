@@ -9,3 +9,4 @@ niri-ipc = { git = "https://github.com/kronberger-droid/niri.git", branch = "mai
 futures-lite = "2"
 clap = { version = "4.0", features = ["derive"] }
 shell-escape = "0.1"
+serde_json = "1"

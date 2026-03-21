@@ -1,5 +1,6 @@
 use futures_lite::StreamExt;
 use shell_escape::unix::escape;
+use std::process::Command;
 use swayipc_async::{Connection, Event, EventType, WindowChange};
 
 use crate::{resolve, Cli, Terminal, APP_ID, Result};
@@ -43,6 +44,17 @@ struct OutputRect {
     height: i32,
 }
 
+fn get_cursor_x() -> Option<i32> {
+    let output = Command::new("swaymsg")
+        .args(["-t", "get_seats", "--raw"])
+        .output()
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let seats = json.as_array()?;
+    let cursor = seats.first()?.get("cursor")?;
+    Some(cursor.get("x")?.as_f64()? as i32)
+}
+
 async fn get_focused_output(conn: &mut Connection) -> Result<OutputRect> {
     let out = conn
         .get_outputs()
@@ -78,10 +90,12 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     let w = resolve(&cli.width, out.width, 0.30);
     let h = resolve(&cli.height, out.height, 0.40);
     let xshift = resolve(&cli.xshift, out.width, 0.0);
-    let yshift = resolve(&cli.yshift, out.height, if cli.center { 0.0 } else { 0.1 });
+    let yshift = resolve(&cli.yshift, out.height, 0.0);
 
-    // Compute final absolute position directly from the focused output rect
-    let final_x = out.x + (out.width - w) / 2 + xshift;
+    // Horizontal: center on cursor, clamped to stay within the output
+    let cursor_x = get_cursor_x().unwrap_or(out.x + out.width / 2);
+    let final_x = (cursor_x - w / 2 + xshift).clamp(out.x, out.x + out.width - w);
+
     let final_y = if cli.center {
         out.y + (out.height - h) / 2 + yshift
     } else {
