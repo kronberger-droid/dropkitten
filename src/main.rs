@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-pub static APP_ID: &str = "test";
+pub static APP_ID: &str = "dropkitten";
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum Terminal {
