@@ -70,7 +70,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // atomically when the window first opens — no flicker.
     let w = resolve(&cli.width, out_w, 0.30);
     let h = resolve(&cli.height, out_h, 0.40);
-    let yshift = resolve(&cli.yshift, out_h, if cli.center { 0.0 } else { 0.1 });
+    let yshift = resolve(&cli.yshift, out_h, 0.0);
 
     // Horizontal: cursor position, clamped so the window stays on-screen.
     let cursor_x = match send(&mut cmd, Request::CursorPosition)? {
