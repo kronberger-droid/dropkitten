@@ -87,6 +87,13 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
         out.y + yshift
     };
 
+    // Float from creation so Sway places the window at cursor position.
+    // Disable mouse warping so the cursor stays put during resize/move.
+    conn.run_command(format!(
+        "for_window [app_id=\"{APP_ID}\"] floating enable"
+    )).await?;
+    conn.run_command("mouse_warping none").await?;
+
     // Subscribe BEFORE spawning so we don't miss the Window::New event
     let subs_conn = Connection::new().await?;
     let mut events = subs_conn.subscribe([EventType::Window]).await?;
@@ -129,7 +136,7 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
 
     conn.run_command(cmd).await?;
 
-    // Wait for window to appear
+    // Wait for window to appear (already floating at cursor via for_window rule)
     while let Some(msg) = events.next().await {
         let Event::Window(ev) = msg? else { continue };
 
@@ -138,15 +145,15 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
         }
     }
 
-    // Disable mouse warping so the cursor stays put during float/move
-    conn.run_command("mouse_warping none").await?;
-
     let sel = format!("[app_id=\"{APP_ID}\"]");
-    conn.run_command(format!("{sel} floating enable")).await?;
+
+    // Step 1: resize (may re-center the window)
     conn.run_command(format!("{sel} resize set {w} {h}")).await?;
+
+    // Step 2: snap back to cursor (cursor hasn't moved — warping is off)
     conn.run_command(format!("{sel} move position mouse")).await?;
 
-    // Read back the cursor-based X position, then override only Y
+    // Step 3: read the cursor-based X, then override only Y
     let tree = conn.get_tree().await?;
     let win_x = find_node_by_app_id(&tree, APP_ID)
         .map(|n| n.rect.x)
@@ -156,20 +163,14 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     conn.run_command(format!("{sel} move absolute position {final_x} {final_y}")).await?;
     conn.run_command(format!("{sel} focus")).await?;
 
-    // Warp cursor into the window
+    // Step 4: warp cursor into the window
     conn.run_command(format!("seat seat0 cursor set {} {}", final_x + w / 2, final_y + h / 2)).await?;
-
-    // Restore mouse warping for focus-loss detection, then revert on exit
-    if original_mouse_warping != "container" {
-        conn.run_command("mouse_warping container").await?;
-    }
 
     focus_change_watcher(&mut conn).await?;
 
-    if original_mouse_warping != "container" {
-        conn.run_command(format!("mouse_warping {}", original_mouse_warping))
-            .await?;
-    }
+    // Restore original mouse warping
+    conn.run_command(format!("mouse_warping {}", original_mouse_warping))
+        .await?;
 
     Ok(())
 }
