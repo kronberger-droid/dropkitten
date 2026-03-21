@@ -1,7 +1,6 @@
 use futures_lite::StreamExt;
 use shell_escape::unix::escape;
-use std::process::Command;
-use swayipc_async::{Connection, Event, EventType, WindowChange};
+use swayipc_async::{Connection, Event, EventType, Node, WindowChange};
 
 use crate::{resolve, Cli, Terminal, APP_ID, Result};
 
@@ -44,17 +43,6 @@ struct OutputRect {
     height: i32,
 }
 
-fn get_cursor_x() -> Option<i32> {
-    let output = Command::new("swaymsg")
-        .args(["-t", "get_seats", "--raw"])
-        .output()
-        .ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let seats = json.as_array()?;
-    let cursor = seats.first()?.get("cursor")?;
-    Some(cursor.get("x")?.as_f64()? as i32)
-}
-
 async fn get_focused_output(conn: &mut Connection) -> Result<OutputRect> {
     let out = conn
         .get_outputs()
@@ -70,6 +58,18 @@ async fn get_focused_output(conn: &mut Connection) -> Result<OutputRect> {
     })
 }
 
+fn find_node_by_app_id<'a>(node: &'a Node, app_id: &str) -> Option<&'a Node> {
+    if node.app_id.as_deref() == Some(app_id) {
+        return Some(node);
+    }
+    for child in node.nodes.iter().chain(node.floating_nodes.iter()) {
+        if let Some(found) = find_node_by_app_id(child, app_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     let mut conn = Connection::new().await?;
     let original_mouse_warping = get_mouse_warping(&mut conn).await;
@@ -80,10 +80,6 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     let h = resolve(&cli.height, out.height, 0.40);
     let xshift = resolve(&cli.xshift, out.width, 0.0);
     let yshift = resolve(&cli.yshift, out.height, 0.0);
-
-    // Horizontal: center on cursor, clamped to stay within the output
-    let cursor_x = get_cursor_x().unwrap_or(out.x + out.width / 2);
-    let final_x = (cursor_x - w / 2 + xshift).clamp(out.x, out.x + out.width - w);
 
     let final_y = if cli.center {
         out.y + (out.height - h) / 2 + yshift
@@ -142,14 +138,28 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
         }
     }
 
-    // Apply float, resize, and move as separate commands to avoid Sway
-    // re-centering the window when chained in a single for_window rule.
+    // Disable mouse warping so the cursor stays put during float/move
+    conn.run_command("mouse_warping none").await?;
+
     let sel = format!("[app_id=\"{APP_ID}\"]");
     conn.run_command(format!("{sel} floating enable")).await?;
     conn.run_command(format!("{sel} resize set {w} {h}")).await?;
+    conn.run_command(format!("{sel} move position mouse")).await?;
+
+    // Read back the cursor-based X position, then override only Y
+    let tree = conn.get_tree().await?;
+    let win_x = find_node_by_app_id(&tree, APP_ID)
+        .map(|n| n.rect.x)
+        .unwrap_or(out.x + (out.width - w) / 2);
+    let final_x = (win_x + xshift).clamp(out.x, out.x + out.width - w);
+
     conn.run_command(format!("{sel} move absolute position {final_x} {final_y}")).await?;
     conn.run_command(format!("{sel} focus")).await?;
 
+    // Warp cursor into the window
+    conn.run_command(format!("seat seat0 cursor set {} {}", final_x + w / 2, final_y + h / 2)).await?;
+
+    // Restore mouse warping for focus-loss detection, then revert on exit
     if original_mouse_warping != "container" {
         conn.run_command("mouse_warping container").await?;
     }
