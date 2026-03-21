@@ -70,17 +70,6 @@ async fn get_focused_output(conn: &mut Connection) -> Result<OutputRect> {
     })
 }
 
-async fn apply_rules(conn: &mut Connection, w: i32, h: i32, x: i32, y: i32) -> Result<()> {
-    conn.run_command(format!(
-        "for_window [app_id=\"{APP_ID}\"] floating enable, \
-         resize set {w} {h}, \
-         move absolute position {x} {y}"
-    ))
-    .await?;
-
-    Ok(())
-}
-
 pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     let mut conn = Connection::new().await?;
     let original_mouse_warping = get_mouse_warping(&mut conn).await;
@@ -101,11 +90,6 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     } else {
         out.y + yshift
     };
-
-    // Single for_window rule: float, resize, and move atomically when the
-    // window appears.  Comma-chained commands all apply to the matched window
-    // in order, so `move` runs after `resize` — no position drift.
-    apply_rules(&mut conn, w, h, final_x, final_y).await?;
 
     // Subscribe BEFORE spawning so we don't miss the Window::New event
     let subs_conn = Connection::new().await?;
@@ -149,7 +133,7 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
 
     conn.run_command(cmd).await?;
 
-    // Wait for window to appear and focus it
+    // Wait for window to appear
     while let Some(msg) = events.next().await {
         let Event::Window(ev) = msg? else { continue };
 
@@ -158,8 +142,13 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
         }
     }
 
-    conn.run_command(format!("[app_id=\"{APP_ID}\"] focus"))
-        .await?;
+    // Apply float, resize, and move as separate commands to avoid Sway
+    // re-centering the window when chained in a single for_window rule.
+    let sel = format!("[app_id=\"{APP_ID}\"]");
+    conn.run_command(format!("{sel} floating enable")).await?;
+    conn.run_command(format!("{sel} resize set {w} {h}")).await?;
+    conn.run_command(format!("{sel} move absolute position {final_x} {final_y}")).await?;
+    conn.run_command(format!("{sel} focus")).await?;
 
     if original_mouse_warping != "container" {
         conn.run_command("mouse_warping container").await?;
