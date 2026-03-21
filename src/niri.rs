@@ -1,11 +1,22 @@
 use niri_ipc::socket::Socket;
-use niri_ipc::{Action, Event, PositionChange, Request, Response, SizeChange};
+use niri_ipc::{
+    Action, Event, FloatingPosition, PresetSize, RelativeTo, Request, Response, SpawnRule,
+};
 
-use crate::{resolve, Cli, Terminal, APP_ID, Result};
+use crate::{resolve, Cli, Size, Terminal, APP_ID, Result};
 
 fn send(sock: &mut Socket, req: Request) -> Result<Response> {
     sock.send(req)?.map_err(|e| e.into())
 }
+
+fn to_preset(size: &Option<Size>, default_frac: f64) -> PresetSize {
+    match size {
+        Some(Size::Px(px)) => PresetSize::Fixed(*px as i32),
+        Some(Size::Fr(fr)) => PresetSize::Proportion(*fr as f64),
+        None => PresetSize::Proportion(default_frac),
+    }
+}
+
 
 fn build_spawn_command(cli: &Cli) -> Vec<String> {
     let cmd_args = &cli.command;
@@ -46,27 +57,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // Command socket for sending actions
     let mut cmd = Socket::connect()?;
 
-    // Spawn the terminal
-    send(&mut cmd, Request::Action(Action::Spawn {
-        command: build_spawn_command(cli),
-    }))?;
-
-    // Wait for window to appear
-    let window_id = loop {
-        let event = next_event()?;
-        if let Event::WindowOpenedOrChanged { window } = event
-            && window.app_id.as_deref() == Some(APP_ID)
-        {
-            break window.id;
-        }
-    };
-
-    // Float the window
-    send(&mut cmd, Request::Action(Action::MoveWindowToFloating {
-        id: Some(window_id),
-    }))?;
-
-    // Fetch output dimensions for sizing and positioning
+    // Query output dimensions (needed for position offsets with pixel values)
     let output = match send(&mut cmd, Request::FocusedOutput)? {
         Response::FocusedOutput(Some(out)) => out,
         _ => return Err("no focused output".into()),
@@ -75,59 +66,75 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     let out_w = logical.width as i32;
     let out_h = logical.height as i32;
 
-    // Set size with sway-compatible defaults (30% width, 40% height)
+    // Build a SpawnRule so niri applies floating, size, and position
+    // atomically when the window first opens — no flicker.
     let w = resolve(&cli.width, out_w, 0.30);
-    send(&mut cmd, Request::Action(Action::SetWindowWidth {
-        id: Some(window_id),
-        change: SizeChange::SetFixed(w),
-    }))?;
-
     let h = resolve(&cli.height, out_h, 0.40);
-    send(&mut cmd, Request::Action(Action::SetWindowHeight {
-        id: Some(window_id),
-        change: SizeChange::SetFixed(h),
-    }))?;
+    let yshift = resolve(&cli.yshift, out_h, if cli.center { 0.0 } else { 0.1 });
 
-    // Position: centered horizontally, 10% from top (or true center with --center)
+    // Horizontal: cursor position, clamped so the window stays on-screen.
+    let cursor_x = match send(&mut cmd, Request::CursorPosition)? {
+        Response::CursorPosition(Some(pos)) => pos.x,
+        _ => (out_w / 2) as f64, // fallback: center
+    };
     let xshift = resolve(&cli.xshift, out_w, 0.0);
-    let yshift = resolve(&cli.yshift, out_h, 0.0);
-    let x = (out_w - w) / 2 + xshift;
+    let x = (cursor_x as i32 - w / 2 + xshift).clamp(0, out_w - w);
+
     let y = if cli.center {
         (out_h - h) / 2 + yshift
     } else {
-        resolve(&cli.yshift, out_h, 0.10)
+        yshift
     };
-    send(&mut cmd, Request::Action(Action::MoveFloatingWindow {
-        id: Some(window_id),
-        x: PositionChange::SetFixed(x as f64),
-        y: PositionChange::SetFixed(y as f64),
+
+    let position = FloatingPosition {
+        x: x as f64,
+        y: y as f64,
+        relative_to: RelativeTo::TopLeft,
+    };
+
+    let rule = SpawnRule {
+        open_floating: Some(true),
+        open_focused: Some(true),
+        default_column_width: Some(Some(to_preset(&cli.width, 0.30))),
+        default_window_height: Some(Some(to_preset(&cli.height, 0.40))),
+        default_floating_position: Some(position),
+        ..SpawnRule::default()
+    };
+
+    send(&mut cmd, Request::Action(Action::Spawn {
+        rule: Some(rule),
+        rule_str: None,
+        command: build_spawn_command(cli),
     }))?;
 
-    // Focus the window
-    send(&mut cmd, Request::Action(Action::FocusWindow { id: window_id }))?;
-
-    // Drain stale events until we confirm our window has focus.
-    // Setup commands (float, resize, move) may have queued intermediate
-    // WindowFocusChanged events that would cause a premature close.
-    loop {
+    // Wait for window to appear.  Capture is_focused from the Window struct
+    // because niri does NOT guarantee event ordering — WindowFocusChanged for
+    // our window may arrive BEFORE WindowOpenedOrChanged, meaning the first
+    // loop would silently consume it.
+    let (window_id, initially_focused) = loop {
         let event = next_event()?;
-        if let Event::WindowFocusChanged { id } = event
-            && id == Some(window_id)
-        {
-            break;
+        if let Event::WindowOpenedOrChanged { window } = event {
+            if window.app_id.as_deref() == Some(APP_ID) {
+                break (window.id, window.is_focused);
+            }
         }
-    }
+    };
 
-    // Now watch for actual focus loss
+    // Watch for focus loss.  Use `initially_focused` from the window-open event
+    // so we don't depend on catching a WindowFocusChanged that may have already
+    // been consumed by the first loop.
+    let mut confirmed = initially_focused;
     loop {
         let event = next_event()?;
-        if let Event::WindowFocusChanged { id } = event
-            && id != Some(window_id)
-        {
-            send(&mut cmd, Request::Action(Action::CloseWindow {
-                id: Some(window_id),
-            }))?;
-            break;
+        if let Event::WindowFocusChanged { id } = event {
+            if id == Some(window_id) {
+                confirmed = true;
+            } else if confirmed {
+                send(&mut cmd, Request::Action(Action::CloseWindow {
+                    id: Some(window_id),
+                }))?;
+                break;
+            }
         }
     }
 

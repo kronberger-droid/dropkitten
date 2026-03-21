@@ -58,14 +58,11 @@ async fn get_focused_output(conn: &mut Connection) -> Result<OutputRect> {
     })
 }
 
-async fn apply_rules(conn: &mut Connection, w: i32, h: i32) -> Result<()> {
+async fn apply_rules(conn: &mut Connection, w: i32, h: i32, x: i32, y: i32) -> Result<()> {
     conn.run_command(format!(
-        "for_window [app_id=\"{APP_ID}\"] floating enable"
-    ))
-    .await?;
-
-    conn.run_command(format!(
-        "for_window [app_id=\"{APP_ID}\"] resize set {w} {h}"
+        "for_window [app_id=\"{APP_ID}\"] floating enable, \
+         resize set {w} {h}, \
+         move absolute position {x} {y}"
     ))
     .await?;
 
@@ -83,8 +80,6 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     let xshift = resolve(&cli.xshift, out.width, 0.0);
     let yshift = resolve(&cli.yshift, out.height, if cli.center { 0.0 } else { 0.1 });
 
-    apply_rules(&mut conn, w, h).await?;
-
     // Compute final absolute position directly from the focused output rect
     let final_x = out.x + (out.width - w) / 2 + xshift;
     let final_y = if cli.center {
@@ -92,6 +87,11 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
     } else {
         out.y + yshift
     };
+
+    // Single for_window rule: float, resize, and move atomically when the
+    // window appears.  Comma-chained commands all apply to the matched window
+    // in order, so `move` runs after `resize` — no position drift.
+    apply_rules(&mut conn, w, h, final_x, final_y).await?;
 
     // Subscribe BEFORE spawning so we don't miss the Window::New event
     let subs_conn = Connection::new().await?;
@@ -135,15 +135,11 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
 
     conn.run_command(cmd).await?;
 
-    // Wait for window to appear, then apply final positioning
+    // Wait for window to appear and focus it
     while let Some(msg) = events.next().await {
         let Event::Window(ev) = msg? else { continue };
 
         if ev.change == WindowChange::New && ev.container.app_id.as_deref() == Some(APP_ID) {
-            conn.run_command(format!(
-                "[app_id=\"{APP_ID}\"] move absolute position {final_x} {final_y}"
-            ))
-            .await?;
             break;
         }
     }

@@ -288,9 +288,8 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "niri-ipc"
-version = "25.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a336854faf3818ec2399152c994796e2e8d723867f9987f1e0cfeaae1dadaed1"
+version = "25.11.0"
+source = "git+https://github.com/kronberger-droid/niri.git?branch=main#325771afb9b43c7e027d67e91791469640d7a5f3"
 dependencies = [
  "serde",
  "serde_json",
