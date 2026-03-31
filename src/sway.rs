@@ -125,10 +125,13 @@ pub async fn spawn_dropdown(cli: &Cli) -> Result<()> {
             cmd
         }
         Terminal::Rio => {
-            let mut cmd = format!("exec rio --class {APP_ID}");
-            for a in &cmd_args {
-                cmd.push(' ');
-                cmd.push_str(&escape(a.clone().into()));
+            let mut cmd = format!("exec rio --app-id {APP_ID}");
+            if !cmd_args.is_empty() {
+                cmd.push_str(" -e");
+                for a in &cmd_args {
+                    cmd.push(' ');
+                    cmd.push_str(&escape(a.clone().into()));
+                }
             }
             cmd
         }

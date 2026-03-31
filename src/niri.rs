@@ -41,8 +41,11 @@ fn build_spawn_command(cli: &Cli) -> Vec<String> {
             args
         }
         Terminal::Rio => {
-            let mut args = vec!["rio".into(), "--class".into(), APP_ID.into()];
-            args.extend(cmd_args.iter().cloned());
+            let mut args = vec!["rio".into(), "--app-id".into(), APP_ID.into()];
+            if !cmd_args.is_empty() {
+                args.push("-e".into());
+                args.extend(cmd_args.iter().cloned());
+            }
             args
         }
     }
