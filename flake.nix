@@ -16,7 +16,9 @@
           src = self;
           cargoLock = {
             lockFile = ./Cargo.lock;
-            allowBuiltinFetchGit = true;
+            # Bump together with Cargo.lock. Fetched at build time, so a
+            # rebased niri fork only breaks machines without it in a cache.
+            outputHashes."niri-ipc-26.4.0" = "sha256-iVewTIIpZnapeDW+nF+M1F7IPp5Jc8b7lqObSydct74=";
           };
         };
 
