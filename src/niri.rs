@@ -70,7 +70,8 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // Open event stream socket BEFORE spawning so we don't miss the open event
     let mut ev_sock = Socket::connect()?;
     ev_sock.send(Request::EventStream)?.map_err(|e| format!("niri EventStream error: {e}"))?;
-    let mut next_event = ev_sock.read_events();
+    let mut raw_events = ev_sock.read_events();
+    let mut next_event = move || next_known(&mut raw_events);
 
     // Command socket for sending actions
     let mut cmd = Socket::connect()?;
@@ -130,7 +131,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // our window may arrive BEFORE WindowOpenedOrChanged, meaning the first
     // loop would silently consume it.
     let (window_id, initially_focused) = loop {
-        let event = next_known(&mut next_event)?;
+        let event = next_event()?;
         if let Event::WindowOpenedOrChanged { window } = event {
             if window.app_id.as_deref() == Some(APP_ID) {
                 break (window.id, window.is_focused);
@@ -143,7 +144,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // been consumed by the first loop.
     let mut confirmed = initially_focused;
     loop {
-        let event = next_known(&mut next_event)?;
+        let event = next_event()?;
         if let Event::WindowFocusChanged { id } = event {
             if id == Some(window_id) {
                 confirmed = true;
