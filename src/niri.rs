@@ -9,6 +9,21 @@ fn send(sock: &mut Socket, req: Request) -> Result<Response> {
     sock.send(req)?.map_err(|e| e.into())
 }
 
+// niri adds `Event` variants faster than any one pin of niri-ipc knows them,
+// and serde fails the read on a variant it has not heard of: a stream opening
+// with `TouchpadToggled` used to kill dropkitten before its window could close.
+// Only two variants matter here, so an event that does not parse is skipped.
+// Safe to retry, since `read_events` consumes the line before parsing it, and
+// a closed socket surfaces as UnexpectedEof rather than InvalidData.
+fn next_known(next: &mut impl FnMut() -> std::io::Result<Event>) -> std::io::Result<Event> {
+    loop {
+        match next() {
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => continue,
+            other => return other,
+        }
+    }
+}
+
 fn to_preset(size: &Option<Size>, default_frac: f64) -> PresetSize {
     match size {
         Some(Size::Px(px)) => PresetSize::Fixed(*px as i32),
@@ -115,7 +130,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // our window may arrive BEFORE WindowOpenedOrChanged, meaning the first
     // loop would silently consume it.
     let (window_id, initially_focused) = loop {
-        let event = next_event()?;
+        let event = next_known(&mut next_event)?;
         if let Event::WindowOpenedOrChanged { window } = event {
             if window.app_id.as_deref() == Some(APP_ID) {
                 break (window.id, window.is_focused);
@@ -128,7 +143,7 @@ pub fn spawn_dropdown(cli: &Cli) -> Result<()> {
     // been consumed by the first loop.
     let mut confirmed = initially_focused;
     loop {
-        let event = next_event()?;
+        let event = next_known(&mut next_event)?;
         if let Event::WindowFocusChanged { id } = event {
             if id == Some(window_id) {
                 confirmed = true;
