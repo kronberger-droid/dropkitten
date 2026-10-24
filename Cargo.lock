@@ -289,7 +289,7 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 [[package]]
 name = "niri-ipc"
 version = "26.4.0"
-source = "git+https://github.com/kronberger-droid/niri.git?branch=main#cdf89dfe40e6fd3fa911a2ba0ea8fb0f5ce01f0a"
+source = "git+https://github.com/kronberger-droid/niri.git?branch=main#d548a00fcdd9a075199a86165b2b5ec16a9eced3"
 dependencies = [
  "serde",
  "serde_json",

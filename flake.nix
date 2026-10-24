@@ -18,7 +18,7 @@
             lockFile = ./Cargo.lock;
             # Bump together with Cargo.lock. Fetched at build time, so a
             # rebased niri fork only breaks machines without it in a cache.
-            outputHashes."niri-ipc-26.4.0" = "sha256-iVewTIIpZnapeDW+nF+M1F7IPp5Jc8b7lqObSydct74=";
+            outputHashes."niri-ipc-26.4.0" = "sha256-Fn8QHcgH/EWUwrXWFR7A8hVnTpM2keWGvbA5ILGrHUk=";
           };
         };
 
